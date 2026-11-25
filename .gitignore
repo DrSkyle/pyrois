@@ -1,0 +1,20 @@
+# Foundry
+out/
+cache/
+broadcast/
+lcov.info
+
+# Environment
+.env
+.env.local
+frontend/.env
+frontend/.env.local
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Local skill / tooling artifacts
+.skills/
+.hallmark/
+.DS_Store
