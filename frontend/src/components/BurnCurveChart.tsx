@@ -1,98 +1,140 @@
 import {
-  HIGH_HEAT_VOLUME_TOKENS,
-  LOW_HEAT_VOLUME_TOKENS,
-  MAX_BURN_BPS,
-  MIN_BURN_BPS,
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ReferenceDot,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   calculateSimulatedBurnBps,
   formatBpsPercent,
+  formatPyroAmount,
 } from "../lib/pyrois";
 
 interface BurnCurveChartProps {
   volumeTokens: number;
 }
 
-const MAX_CHART_VOLUME = 15_000_000;
-const PLOT_LEFT = 62;
-const PLOT_RIGHT = 440;
-const PLOT_TOP = 24;
-const PLOT_BOTTOM = 216;
-const PLOT_WIDTH = PLOT_RIGHT - PLOT_LEFT;
-const PLOT_HEIGHT = PLOT_BOTTOM - PLOT_TOP;
-
-function xForVolume(volume: number): number {
-  const clamped = Math.max(0, Math.min(MAX_CHART_VOLUME, volume));
-  return PLOT_LEFT + (clamped / MAX_CHART_VOLUME) * PLOT_WIDTH;
+interface CurvePoint {
+  volumeM: number;
+  burnPct: number;
 }
 
-function yForBps(bps: number): number {
-  const ratio = bps / MAX_BURN_BPS;
-  return PLOT_BOTTOM - ratio * PLOT_HEIGHT;
-}
+const CURVE_DATA: CurvePoint[] = Array.from({ length: 31 }, (_, index) => {
+  const volumeM = index * 0.5;
+  const bps = calculateSimulatedBurnBps(volumeM * 1_000_000);
+  return {
+    volumeM,
+    burnPct: Number((bps / 100).toFixed(2)),
+  };
+});
 
 export function BurnCurveChart({ volumeTokens }: BurnCurveChartProps) {
-  const activeBps = calculateSimulatedBurnBps(volumeTokens);
-  const clampedVol = Math.max(0, Math.min(MAX_CHART_VOLUME, volumeTokens));
-
-  const x0 = xForVolume(0);
-  const xLow = xForVolume(LOW_HEAT_VOLUME_TOKENS);
-  const xHigh = xForVolume(HIGH_HEAT_VOLUME_TOKENS);
-  const xMax = xForVolume(MAX_CHART_VOLUME);
-
-  const yMin = yForBps(MIN_BURN_BPS);
-  const yMid = yForBps(250);
-  const yMax = yForBps(MAX_BURN_BPS);
-
-  const markerX = xForVolume(clampedVol);
-  const markerY = yForBps(activeBps);
-
-  const polylinePoints = `${x0},${yMin} ${xLow},${yMin} ${xHigh},${yMax} ${xMax},${yMax}`;
+  const clampedTokens = Math.max(0, Math.min(15_000_000, volumeTokens));
+  const activeVolumeM = clampedTokens / 1_000_000;
+  const activeBps = calculateSimulatedBurnBps(clampedTokens);
+  const activeBurnPct = Number((activeBps / 100).toFixed(2));
 
   return (
-    <svg
-      className="burn-curve-chart"
-      viewBox="0 0 468 256"
+    <div
+      className="burn-curve-shell"
       role="img"
-      aria-label={`Pyrois 1-hour sell burn curve. At ${(clampedVol / 1_000_000).toFixed(1)} million PYRO volume, sell burn is ${formatBpsPercent(activeBps)}.`}
+      aria-label={`Pyrois 1-hour sell burn curve. At ${activeVolumeM.toFixed(1)} million PYRO volume, sell burn is ${formatBpsPercent(activeBps)}.`}
     >
-      <line className="curve-grid-line" x1={PLOT_LEFT} y1={yMax} x2={PLOT_RIGHT} y2={yMax} />
-      <line className="curve-grid-line" x1={PLOT_LEFT} y1={yMid} x2={PLOT_RIGHT} y2={yMid} />
-      <line className="curve-grid-line" x1={PLOT_LEFT} y1={yMin} x2={PLOT_RIGHT} y2={yMin} />
-      <line className="curve-grid-line" x1={PLOT_LEFT} y1={PLOT_BOTTOM} x2={PLOT_RIGHT} y2={PLOT_BOTTOM} />
-
-      <text className="curve-axis-label" x={PLOT_LEFT - 10} y={yMax + 4} textAnchor="end">
-        5.0%
-      </text>
-      <text className="curve-axis-label" x={PLOT_LEFT - 10} y={yMid + 4} textAnchor="end">
-        2.5%
-      </text>
-      <text className="curve-axis-label" x={PLOT_LEFT - 10} y={yMin + 4} textAnchor="end">
-        0.5%
-      </text>
-
-      <text className="curve-axis-label" x={x0} y={PLOT_BOTTOM + 22} textAnchor="start">
-        0
-      </text>
-      <text className="curve-axis-label" x={xLow} y={PLOT_BOTTOM + 22} textAnchor="middle">
-        1M
-      </text>
-      <text className="curve-axis-label" x={xHigh} y={PLOT_BOTTOM + 22} textAnchor="middle">
-        10M
-      </text>
-      <text className="curve-axis-label" x={xMax} y={PLOT_BOTTOM + 22} textAnchor="end">
-        15M PYRO
-      </text>
-
-      <polyline className="curve-path-base" points={polylinePoints} />
-
-      <line
-        className="curve-guide-line"
-        x1={markerX}
-        y1={markerY}
-        x2={markerX}
-        y2={PLOT_BOTTOM}
-      />
-      <circle className="curve-marker-outer" cx={markerX} cy={markerY} r={7} />
-      <circle className="curve-marker-inner" cx={markerX} cy={markerY} r={3} />
-    </svg>
+      <ResponsiveContainer width="100%" height={248}>
+        <AreaChart
+          data={CURVE_DATA}
+          margin={{ top: 12, right: 16, left: -12, bottom: 4 }}
+        >
+          <CartesianGrid
+            vertical={false}
+            stroke="var(--color-rule)"
+            strokeDasharray="3 3"
+          />
+          <XAxis
+            dataKey="volumeM"
+            type="number"
+            domain={[0, 15]}
+            ticks={[0, 1, 5, 10, 15]}
+            tickFormatter={(value: number) => (value === 0 ? "0" : `${value}M`)}
+            stroke="var(--color-rule)"
+            tick={{
+              fill: "var(--color-muted)",
+              fontSize: 12,
+              fontFamily: "var(--font-outlier)",
+            }}
+            tickLine={false}
+          />
+          <YAxis
+            domain={[0, 5.5]}
+            ticks={[0.5, 2.5, 5]}
+            tickFormatter={(value: number) => `${value.toFixed(1)}%`}
+            stroke="var(--color-rule)"
+            tick={{
+              fill: "var(--color-muted)",
+              fontSize: 12,
+              fontFamily: "var(--font-outlier)",
+            }}
+            tickLine={false}
+            axisLine={false}
+          />
+          <Tooltip
+            cursor={{
+              stroke: "var(--color-muted)",
+              strokeWidth: 1,
+              strokeDasharray: "3 3",
+            }}
+            contentStyle={{
+              backgroundColor: "var(--color-paper)",
+              borderColor: "var(--color-rule)",
+              borderRadius: "var(--radius-card)",
+              fontFamily: "var(--font-outlier)",
+              fontSize: "var(--text-xs)",
+              color: "var(--color-ink)",
+            }}
+            labelFormatter={(value) =>
+              `${formatPyroAmount(Number(value) * 1_000_000)} PYRO 1h volume`
+            }
+            formatter={(value) => [`${Number(value).toFixed(2)}%`, "Sell burn"]}
+          />
+          <ReferenceLine
+            x={1}
+            stroke="var(--color-rule)"
+            strokeDasharray="2 4"
+          />
+          <ReferenceLine
+            x={10}
+            stroke="var(--color-rule)"
+            strokeDasharray="2 4"
+          />
+          <Area
+            type="linear"
+            dataKey="burnPct"
+            stroke="var(--color-ink)"
+            strokeWidth={2}
+            fill="var(--color-paper-3)"
+            fillOpacity={0.55}
+            isAnimationActive={false}
+          />
+          <ReferenceLine
+            x={activeVolumeM}
+            stroke="var(--color-accent)"
+            strokeDasharray="4 4"
+          />
+          <ReferenceDot
+            x={activeVolumeM}
+            y={activeBurnPct}
+            r={6}
+            fill="var(--color-accent)"
+            stroke="var(--color-paper)"
+            strokeWidth={2.5}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

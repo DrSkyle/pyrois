@@ -5,9 +5,11 @@ import {
   formatUnits,
   http,
   isAddress,
+  parseUnits,
   zeroAddress,
   type Address,
   type Chain,
+  type Hash,
 } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
@@ -21,6 +23,11 @@ export const MAX_BURN_BPS = 500;
 export const BPS_DENOMINATOR = 10_000;
 export const LOW_HEAT_VOLUME_TOKENS = 1_000_000;
 export const HIGH_HEAT_VOLUME_TOKENS = 10_000_000;
+
+export const BASE_WETH_ADDRESS: Address =
+  "0x4200000000000000000000000000000000000006";
+export const DEFAULT_BASE_V2_ROUTER: Address =
+  "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24";
 
 export const PYROIS_ABI = [
   {
@@ -59,35 +66,55 @@ export const PYROIS_ABI = [
   },
   {
     type: "function",
-    name: "MIN_SUPPLY",
+    name: "allowance",
     stateMutability: "view",
-    inputs: [],
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
     outputs: [{ name: "", type: "uint256" }],
   },
   {
     type: "function",
-    name: "MIN_BURN_BPS",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "MAX_BURN_BPS",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
   },
 ] as const;
 
-const rawChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 84532);
-export const activeChain: Chain = rawChainId === base.id ? base : baseSepolia;
+export const UNISWAP_V2_ROUTER_ABI = [
+  {
+    type: "function",
+    name: "swapExactTokensForETHSupportingFeeOnTransferTokens",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "amountOutMin", type: "uint256" },
+      { name: "path", type: "address[]" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const rawChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 8453);
+export const activeChain: Chain = rawChainId === baseSepolia.id ? baseSepolia : base;
 
 const rawAddress = (import.meta.env.VITE_PYROIS_ADDRESS ?? "").trim();
 export const pyroisAddress: Address = isAddress(rawAddress)
   ? rawAddress
   : zeroAddress;
 export const hasConfiguredContract = pyroisAddress !== zeroAddress;
+
+const rawRouter = (import.meta.env.VITE_V2_ROUTER_ADDRESS ?? "").trim();
+export const v2RouterAddress: Address = isAddress(rawRouter)
+  ? rawRouter
+  : DEFAULT_BASE_V2_ROUTER;
 
 const rpcOverride = (import.meta.env.VITE_RPC_URL ?? "").trim();
 
@@ -181,12 +208,16 @@ interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
 
-export async function connectInjectedWallet(): Promise<Address> {
+function getInjectedProvider(): Eip1193Provider {
   const ethereum = (window as Window & { ethereum?: Eip1193Provider }).ethereum;
   if (!ethereum) {
     throw new Error("No browser wallet detected. Install Coinbase Wallet, MetaMask, or Rabby.");
   }
+  return ethereum;
+}
 
+export async function connectInjectedWallet(): Promise<Address> {
+  const ethereum = getInjectedProvider();
   const walletClient = createWalletClient({
     chain: activeChain,
     transport: custom(ethereum),
@@ -197,6 +228,58 @@ export async function connectInjectedWallet(): Promise<Address> {
     throw new Error("Wallet connection returned no account.");
   }
   return addresses[0];
+}
+
+export async function executePyroSellForEth(
+  account: Address,
+  sellAmountTokens: string,
+  onStage?: (stage: string) => void
+): Promise<Hash> {
+  if (!hasConfiguredContract) {
+    throw new Error("Deploy Pyrois and set VITE_PYROIS_ADDRESS before selling on-chain.");
+  }
+
+  const amountIn = parseUnits(sellAmountTokens, PYRO_DECIMALS);
+  if (amountIn <= 0n) {
+    throw new Error("Enter a PYRO amount greater than zero.");
+  }
+
+  const ethereum = getInjectedProvider();
+  const walletClient = createWalletClient({
+    account,
+    chain: activeChain,
+    transport: custom(ethereum),
+  });
+
+  const currentAllowance = await publicClient.readContract({
+    address: pyroisAddress,
+    abi: PYROIS_ABI,
+    functionName: "allowance",
+    args: [account, v2RouterAddress],
+  });
+
+  if (currentAllowance < amountIn) {
+    onStage?.("Approving PYRO for Uniswap V2 Router…");
+    const approveHash = await walletClient.writeContract({
+      address: pyroisAddress,
+      abi: PYROIS_ABI,
+      functionName: "approve",
+      args: [v2RouterAddress, amountIn],
+    });
+    await publicClient.waitForTransactionReceipt({ hash: approveHash });
+  }
+
+  onStage?.("Submitting sell swap on Base…");
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 15);
+  const swapHash = await walletClient.writeContract({
+    address: v2RouterAddress,
+    abi: UNISWAP_V2_ROUTER_ABI,
+    functionName: "swapExactTokensForETHSupportingFeeOnTransferTokens",
+    args: [amountIn, 0n, [pyroisAddress, BASE_WETH_ADDRESS], account, deadline],
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash: swapHash });
+  return swapHash;
 }
 
 /**

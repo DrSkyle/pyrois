@@ -239,46 +239,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Burn Curve SVG */
-.burn-curve-chart {
+/* Recharts Burn Curve */
+.burn-curve-shell {
   width: 100%;
-  height: auto;
-  overflow: visible;
-}
-
-.curve-grid-line {
-  stroke: var(--color-rule);
-  stroke-width: 1;
-}
-
-.curve-axis-label {
-  fill: var(--color-muted);
-  font-family: var(--font-outlier);
-  font-size: 12px;
-}
-
-.curve-path-base {
-  fill: none;
-  stroke: var(--color-ink);
-  stroke-width: 2.25;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.curve-guide-line {
-  stroke: var(--color-accent);
-  stroke-width: 1.25;
-  stroke-dasharray: 4 4;
-}
-
-.curve-marker-outer {
-  fill: var(--color-paper);
-  stroke: var(--color-accent);
-  stroke-width: 2.5;
-}
-
-.curve-marker-inner {
-  fill: var(--color-accent);
+  min-height: 248px;
 }
 
 /* Section 2: Current Heat */
@@ -489,6 +453,14 @@
 
 .sim-row-value--accent {
   color: var(--color-accent);
+}
+
+.sim-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding-top: var(--space-lg);
 }
 
 /* Section 4: On-Chain Proof */

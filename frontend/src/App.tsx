@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { zeroAddress, type Address } from "viem";
+import { zeroAddress, type Address, type Hash } from "viem";
 import { BurnCurveChart } from "./components/BurnCurveChart";
 import {
   EPOCH_DURATION_SECONDS,
@@ -8,6 +8,7 @@ import {
   activeChain,
   connectInjectedWallet,
   contractExplorerUrl,
+  executePyroSellForEth,
   explorerBaseUrl,
   fetchLiveHeatState,
   fetchTokenBalance,
@@ -32,6 +33,10 @@ export function App() {
 
   const [sellInput, setSellInput] = useState<string>("100000");
   const [marketVolume, setMarketVolume] = useState<number>(2_500_000);
+  const [selling, setSelling] = useState<boolean>(false);
+  const [sellStage, setSellStage] = useState<string>("");
+  const [sellError, setSellError] = useState<string>("");
+  const [lastTxHash, setLastTxHash] = useState<Hash | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -74,7 +79,7 @@ export function App() {
     return () => window.clearInterval(tickId);
   }, []);
 
-  const handleConnectWallet = async () => {
+  const handleConnectWallet = async (): Promise<Address | null> => {
     setWalletError("");
     setConnecting(true);
     try {
@@ -82,17 +87,54 @@ export function App() {
       setWalletAddress(account);
       const balance = await fetchTokenBalance(account);
       setWalletBalance(balance);
+      return account;
     } catch (err) {
       setWalletError(
         err instanceof Error ? err.message : "Unable to connect wallet."
       );
+      return null;
     } finally {
       setConnecting(false);
     }
   };
 
+  const handleSellOnChain = async () => {
+    setSellError("");
+    setSellStage("");
+    setLastTxHash(null);
+
+    const account = walletAddress ?? (await handleConnectWallet());
+    if (!account) return;
+
+    setSelling(true);
+    try {
+      const hash = await executePyroSellForEth(
+        account,
+        sellInput.replace(/,/g, "").trim(),
+        (stage) => setSellStage(stage)
+      );
+      setLastTxHash(hash);
+      setSellStage("");
+      const [nextHeat, nextBal] = await Promise.all([
+        fetchLiveHeatState(),
+        fetchTokenBalance(account),
+      ]);
+      setHeat(nextHeat);
+      setWalletBalance(nextBal);
+    } catch (err) {
+      setSellError(
+        err instanceof Error ? err.message : "Sell transaction did not complete."
+      );
+      setSellStage("");
+    } finally {
+      setSelling(false);
+    }
+  };
+
   const parsedSellAmount = Number(sellInput.replace(/,/g, ""));
   const simulation = simulateSell(parsedSellAmount, marketVolume);
+  const chartVolume = heat.synced ? heat.activeEpochVolume : simulation.effectiveVolume;
+  const chartBurnBps = heat.synced ? heat.activeBurnBps : simulation.burnBps;
 
   const burnProgressRatio = Math.min(
     1,
@@ -173,7 +215,7 @@ export function App() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={handleConnectWallet}
+                  onClick={() => void handleConnectWallet()}
                   disabled={connecting}
                 >
                   {walletAddress
@@ -219,11 +261,11 @@ export function App() {
             </div>
 
             <figure className="hero-figure">
-              <BurnCurveChart volumeTokens={heat.activeEpochVolume} />
+              <BurnCurveChart volumeTokens={chartVolume} />
               <figcaption className="hero-figure-caption">
-                <span>Live 1-hour burn curve</span>
+                <span>{heat.synced ? "Live 1-hour burn curve" : "1-hour burn curve"}</span>
                 <span className="hero-figure-readout">
-                  {formatBpsPercent(heat.activeBurnBps)} sell burn
+                  {formatBpsPercent(chartBurnBps)} sell burn
                 </span>
               </figcaption>
             </figure>
@@ -278,7 +320,7 @@ export function App() {
                 The curve
               </h2>
               <p className="section-note">
-                Model any sell order against rolling 1-hour market volume using the contract formula.
+                Preview your exact burn across 1-hour market volume, or execute a fee-on-transfer sell directly on Base.
               </p>
             </div>
 
@@ -361,6 +403,42 @@ export function App() {
                   <span className="sim-row-value">
                     {formatPyroAmount(simulation.received, 2)}&nbsp;PYRO
                   </span>
+                </div>
+
+                <div className="sim-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void handleSellOnChain()}
+                    disabled={selling || !Number.isFinite(parsedSellAmount) || parsedSellAmount <= 0}
+                  >
+                    {selling ? "Submitting…" : "Sell PYRO for ETH"}
+                  </button>
+                  <p
+                    className={
+                      sellError
+                        ? "wallet-feedback wallet-feedback--error"
+                        : "wallet-feedback"
+                    }
+                    role="status"
+                  >
+                    {sellError ? (
+                      sellError
+                    ) : sellStage ? (
+                      sellStage
+                    ) : lastTxHash ? (
+                      <a
+                        href={`${explorerBaseUrl}/tx/${lastTxHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="proof-link"
+                      >
+                        Confirmed on BaseScan
+                      </a>
+                    ) : (
+                      "Routes through Uniswap V2 Router02 on Base."
+                    )}
+                  </p>
                 </div>
               </div>
             </div>
